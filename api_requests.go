@@ -5,41 +5,52 @@ import (
 	"context"
 	"io"
 	"net/http"
+
+	"github.com/rs/zerolog/log"
 )
 
 func relayRequest(w http.ResponseWriter, query string, ctx context.Context) error {
 	reqbody, err := makeValidRequestBody(query)
+	reqctx := mustGetReqContext(ctx)
 	req, err := http.NewRequest("POST", "https://api.github.com/graphql", reqbody)
 	if err != nil {
+		reqctx.status = http.StatusInternalServerError
+		log.Error().Err(err).Str("GraphQL request", query).Msgf("Error while creating request to data endpoint")
 		return err
 	}
+	auth := reqctx.token
 
-	auth, _ := getAuthorization(ctx)
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		reqctx.status = http.StatusServiceUnavailable
+		log.Error().Err(err).Str("GraphQL request", query).Msgf("Error while making request to data endpoint")
 		return err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		reqctx.status = resp.StatusCode
+		log.Error().Err(err).Str("GraphQL request", query).Msgf("Bad response from data endpoint")
 		return err
 	}
 	hasErrors := bytes.HasPrefix(body, []byte(`{"errors":[`))
 	if hasErrors {
-		w.WriteHeader(resp.StatusCode)
+		log.Debug().Str("API Response", string(body)).Str("GraphQL request", query).Msgf("Request to data endpoint returned an error")
+		reqctx.status = resp.StatusCode
 		return nil
 	}
 	_, err = w.Write(body)
 	if err != nil {
+		reqctx.status = http.StatusInternalServerError
 		return err
 	}
-	w.WriteHeader(resp.StatusCode)
-	w.Header().Add("Cache-Control", "max-age=600")
 	w.Header().Add("Content-Type", "application/json")
+	reqctx.cache = "max-age=600"
+	reqctx.status = -1
 	return nil
 }
 
@@ -49,7 +60,7 @@ var (
       edges {
         node {
           ... on Repository` + selectRepoFields + `
-			}
+				}
 		}` + pageInfo + `
 	}
 }`
@@ -58,8 +69,7 @@ var (
 		%s(first: 10, after:%s) {
       nodes` + selectRepoFields + pageInfo + `
 		}
-	}
-	}
+	}}
 	`
 	QueryIssue = `query {
 		repository(owner: "%s", name: "%s") {

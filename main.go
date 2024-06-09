@@ -7,21 +7,30 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
 	err := godotenv.Load(".env")
-	if (err != nil){
-		panic("Could't load env variables")
+	if err != nil {
+		log.Panic().Msg("Could't load env variables")
 	}
+	initLog()
+	validateClient()
 	server := http.Server{Addr: mustGetEnv("ADDRESS")}
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     mustGetEnv("REDIS"),
-		Password: os.Getenv("REDIS_PASSWORD"),
-		DB: 0,
-	})
 
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     mustGetEnv("REDIS") + ":" + mustGetEnv("REDIS_PORT"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB:       0,
+	})
 	ctx := context.WithValue(context.Background(), "redis", redisClient)
+	err = redisClient.Echo(ctx, "test").Err()
+	if err != nil {
+		log.Panic().Err(err).Msg("Redis is not available")
+	}
+	log.Info().Msgf("Connected to Redis on %s", redisClient.Options().Addr)
+
 	ctx = mustInitCrypto(ctx)
 
 	http.HandleFunc("INFO /*", contextHandler(false, corsHandler, ctx))
@@ -44,8 +53,7 @@ func main() {
 	http.HandleFunc("POST /api/comments/new", contextHandler(true, createCommentHandler, ctx))
 
 	http.HandleFunc("GET /*", SPAHandler)
+	log.Info().Msgf("Listening on %s ...", server.Addr)
 	err = server.ListenAndServe()
-	println(err.Error())
+	log.Error().Err(err)
 }
-
-

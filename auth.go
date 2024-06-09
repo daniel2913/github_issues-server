@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/golang-jwt/jwt"
+	"github.com/rs/zerolog/log"
 )
 
 type Viewer struct {
@@ -18,35 +19,49 @@ type Viewer struct {
 	} `json:"data"`
 }
 
-func (this *User) RefreshInfo() error {
+func (this *User) RefreshInfo(ctx context.Context) error {
+	reqctx := mustGetReqContext(ctx)
 	reqbody, err := makeValidRequestBody(QueryUserInfo)
+
 	if err != nil {
-		panic("Bad Constant User Request!")
-	}
-	req, err := http.NewRequest("POST", "https://api.github.com/graphql", reqbody)
-	if err != nil {
+		reqctx.status = http.StatusInternalServerError
 		return err
 	}
+
+	req, err := http.NewRequest("POST", "https://api.github.com/graphql", reqbody)
+	if err != nil {
+		reqctx.status = http.StatusInternalServerError
+		log.Error().Err(err).Msg("Error while creating user info request")
+		return err
+	}
+
 	req.Header.Set("Authorization", "Bearer "+this.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode/100 != 2 {
+		reqctx.status = http.StatusUnauthorized
+		log.Error().Err(err).Msg("Error while making user info request")
 		return err
 	}
 	defer resp.Body.Close()
 	viewer := Viewer{}
 	bytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		reqctx.status = http.StatusInternalServerError
+		log.Error().Err(err).Msg("Bad response from user info request")
 		return err
 	}
 	err = json.Unmarshal(bytes, &viewer)
 	if err != nil {
+		reqctx.status = http.StatusInternalServerError
+		log.Error().Err(err).Msg("Bad response json from user info request")
 		return err
 	}
 	this.Login = viewer.Data.Viewer.Login
 	this.Id = viewer.Data.Viewer.ID
+	log.Debug().Msgf("Got user info for %s", this.Login)
 	return nil
 }
 
@@ -55,18 +70,6 @@ func (this *User) JWT(ctx context.Context) (string, error) {
 		"id": this.Id,
 	})
 	return token.SignedString(ctx.Value("private_rsa_key"))
-}
-
-func getAuthorization(ctx context.Context) (string, string) {
-	token, ok := ctx.Value("authorization").(string)
-	if !ok {
-		panic("NO AUTHORIZATION IN CONTEXT")
-	}
-	login, ok := ctx.Value("login").(string)
-	if !ok {
-		panic("NO AUTHORIZATION IN CONTEXT")
-	}
-	return token, login
 }
 
 func authenticate(w http.ResponseWriter, r *http.Request, ctx context.Context) (string, string, error) {

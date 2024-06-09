@@ -5,46 +5,51 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
-
-
-func corsHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) {
-	return
+func corsHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) error {
+	reqctx := mustGetReqContext(ctx)
+	reqctx.status = http.StatusNoContent
+	return nil
 }
 
-func queryCommentsHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) {
+func queryCommentsHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) error {
+	reqctx := mustGetReqContext(ctx)
 	qp := r.URL.Query()
 	owner := qp.Get("owner")
 	repoName := qp.Get("repo_name")
 	issueNumber := qp.Get("issue_number")
 	after := qp.Get("after")
 	if owner == "" || repoName == "" || issueNumber == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		err := fmt.Errorf("Bad request")
+		log.Debug().Msgf("Request from %s didn't provide query params", r.RemoteAddr)
+		reqctx.status = http.StatusBadRequest
+		return err
 	}
+
 	if after == "" || after == "null" {
 		after = "null"
 	} else {
 		after = fmt.Sprintf(`"%s"`, after)
 	}
 	query := fmt.Sprintf(QueryComments, owner, repoName, issueNumber, after)
-	err := relayRequest(w, query, ctx)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-	}
 	w.Header().Set("Cache-Control", "no-store")
+	return relayRequest(w, query, ctx)
 }
 
-func queryIssuesHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) {
+func queryIssuesHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) error {
+	reqctx := mustGetReqContext(ctx)
 	qp := r.URL.Query()
 	owner := qp.Get("owner")
 	repoName := qp.Get("repo_name")
 	issueNumber := qp.Get("issue_number")
 	after := qp.Get("after")
 	if owner == "" || repoName == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		reqctx.status = http.StatusBadRequest
+		log.Debug().Msgf("Request from %s didn't provide query params", r.RemoteAddr)
+		return fmt.Errorf("Bad Request")
 	}
 	if after == "" || after == "null" {
 		after = "null"
@@ -57,14 +62,11 @@ func queryIssuesHandler(w http.ResponseWriter, r *http.Request, ctx context.Cont
 	} else {
 		query = fmt.Sprintf(QueryIssue, owner, repoName, issueNumber)
 	}
-	err := relayRequest(w, query, ctx)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	return relayRequest(w, query, ctx)
 }
 
-func queryReposHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) {
+func queryReposHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) error {
+	reqctx := mustGetReqContext(ctx)
 	params := strings.Split(r.URL.Path, "/")
 	param := params[len(params)-1]
 	query := ""
@@ -85,29 +87,25 @@ func queryReposHandler(w http.ResponseWriter, r *http.Request, ctx context.Conte
 		case "own":
 			filter = "repositories"
 		default:
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			log.Debug().Msgf("Request from %s didn't provide query params", r.RemoteAddr)
+			reqctx.status = http.StatusBadRequest
+			return fmt.Errorf("Bad request")
 		}
-		_, login := getAuthorization(ctx)
+		login := reqctx.login
 		query = fmt.Sprintf(QueryPersonalRepos, login, filter, after)
 	}
-	err := relayRequest(w, query, ctx)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+	return relayRequest(w, query, ctx)
 }
 
-func createCommentHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) {
+func createCommentHandler(w http.ResponseWriter, r *http.Request, ctx context.Context) error {
+	reqctx := mustGetReqContext(ctx)
 	subj := r.URL.Query().Get("subject_id")
 	body := r.FormValue("body")
-	_, login := getAuthorization(ctx)
+	login := reqctx.login
 	if subj == "" || body == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		log.Debug().Msgf("Request from %s didn't provide comment parameters", r.RemoteAddr)
+		reqctx.status = http.StatusBadRequest
+		return fmt.Errorf("Bad request")
 	}
-	err := relayRequest(w, fmt.Sprintf(PostComment, subj, login, body), ctx)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	return relayRequest(w, fmt.Sprintf(PostComment, subj, login, body), ctx)
 }
