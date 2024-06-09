@@ -60,7 +60,7 @@ func contextHandler(userOnly bool, fn func(w http.ResponseWriter, r *http.Reques
 		err = fn(w, r, ctx)
 
 		if reqctx.status == http.StatusTeapot {
-			log.Warn().Msgf("Request to %s returned default status code", r.RequestURI)
+			log.Warn().Msgf("Request to %s %s returned default status code", r.Method, r.RequestURI)
 		}
 
 		if err != nil {
